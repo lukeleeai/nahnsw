@@ -270,6 +270,7 @@ namespace hnswlib
 
         void getNormRangeBasedFactors()
         {
+            std::cout << omp_get_num_threads() << std::endl;
             size_t num_data = max_elements_;
 
             // Sort data by norm in ascending order
@@ -299,7 +300,7 @@ namespace hnswlib
                 float xp_sum = 0;
                 float pp_sum = 0;
 
-//                #pragma omp parallel for reduction(+:xp_sum,pp_sum)
+                #pragma omp parallel for reduction(+:xp_sum,pp_sum) num_threads(8)
                 for (int j = 0; j < z; j++) // samples
                 {
                     int random_indice = getRandomIndice(range_start_indices[i], range_start_indices[i + 1]);
@@ -333,15 +334,14 @@ namespace hnswlib
                     }
 
                     // Get p_i * p_j
-//                    #pragma omp parallel for reduction(+:pp_sum) num_threads(MAX)
                     for (int m = 0; m < num_neighbours; m++)
                     {
                         for (int n = 0; n < num_neighbours; n++)
                         {
                             if (m != n)
                             {
-                                #pragma omp parallel for reduction(+:pp_sum) num_threads(MAX)
-//                                #pragma omp simd reduction(+:pp_sum)
+//                                #pragma omp parallel for reduction(+:pp_sum) num_threads(MAX)
+                                #pragma omp simd reduction(+:pp_sum)
                                 for (int d = 0; d < dim_; d += 6)
                                 {
                                     pp_sum += neighbours[m][d] * neighbours[n][d] +

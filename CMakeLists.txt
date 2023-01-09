@@ -31,4 +31,9 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
 
     add_executable(main main.cpp sift_1b.cpp)
     target_link_libraries(main hnswlib)
+
+    find_package(OpenMP REQUIRED)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(main PRIVATE OpenMP::OpenMP_CXX)
+    endif()
 endif()
