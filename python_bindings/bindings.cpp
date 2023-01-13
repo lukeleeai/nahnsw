@@ -270,14 +270,13 @@ public:
                 ep_added = true;
             }
 
-            // call the factor thing here
             if (useNormFactor) {
-                // add dataset and get the factors
+                // Add data to dataset and calculate the adjusting factors
                 for(int row = 0; row<rows; row++) {
                   appr_alg->addData((float *)items.data(row), dim);
                 }
 
-                // get norm ranged based factors
+                // Calculate norm ranged based factors
                 appr_alg->getNormRangeBasedFactors();
             }
 
