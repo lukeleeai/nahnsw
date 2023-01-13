@@ -81,8 +81,6 @@ namespace hnswlib
             mult_ = 1 / log(1.0 * M_);
             revSize_ = 1.0 / mult_;
 
-            // NEW
-            // num_ranges = 4;
             budgets = 0;
             dim_ = dim;
             useNormFactor_ = useNormFactor;
@@ -120,7 +118,6 @@ namespace hnswlib
         size_t maxM_;
         size_t maxM0_;
         size_t ef_construction_;
-        // size_t ef_;
 
         double mult_, revSize_;
         int maxlevel_;
@@ -152,14 +149,14 @@ namespace hnswlib
         std::default_random_engine level_generator_;
         std::default_random_engine update_probability_generator_;
 
-        // new variables
-        // int num_ranges;
-        float range_start_norms[5] = {1, 2, 3, 4, 0};
-        float factors[5] = {1.0, 2.0, 3.9, 4.9, 3};
-        size_t budgets;
-        size_t dim_;
-        std::vector<std::vector<float>> dataset;
-        bool useNormFactor_;
+        // Variables for NAPG
+        size_t budgets;  // Track how much computation is used
+        size_t dim_;  // Dimension of the data
+        std::vector<std::vector<float>> dataset;  // Store data before constructing the graph to calculate the factors
+        bool useNormFactor_;  // Whether to use NAPG or not
+        int num_subranges = 5;  // Number of subranges
+        float range_start_norms[5];  // Norms of the first data in each subrange
+        float factors[5];  // Adjusting factors for each subrange
 
         inline labeltype getExternalLabel(tableint internal_id) const
         {
@@ -213,6 +210,9 @@ namespace hnswlib
             return data;
         }
 
+        /// @brief Calculate the norm 2 of a vector.
+        /// @param vec Vector to calculate the norm.
+        /// @return Norm 2 of vec.
         static float vectorNorm(std::vector<float> vec)
         {
             float sum = 0.0;
@@ -235,11 +235,18 @@ namespace hnswlib
           dataset.push_back(data_list);
         }
 
+        /// @brief Compare the norm 2 of two vectors. This method is used to sort `dataset`.
+        /// @param data1 First vector to compare.
+        /// @param data2 Second vector to compare.
+        /// @return True if the first vector is smaller than the second vector.
         static bool compareNorm(std::vector<float> data1, std::vector<float> data2)
         {
             return (vectorNorm(data1) < vectorNorm(data2));
         }
 
+        /// @brief Get the adjusting factor of a data point according to its norm
+        /// @param internalId Id of the data point
+        /// @return Adjusting factor of the data point
         float getFactor(tableint internalId)
         {
             size_t dim = *((size_t *)dist_func_param_);
@@ -271,6 +278,15 @@ namespace hnswlib
             return low + rand() % (high - low + 1);
         }
 
+        /**
+         * @brief Calculate the norm ranged based adjusting factors for each range
+         *
+         * 1. Partition the dataset into sub-ranges in ascending order of the norms
+         * 2. For each sub-range, sample a few data points (x) to use a query, get items that have largest inner products
+         *      with them (p)
+         * 3. Calculate the average of inner product values between all x and their p : xp_mean
+         * 4. Calculate the average of inner product values among all x's p : pp_mean
+         */
         void getNormRangeBasedFactors()
         {
             size_t num_data = max_elements_;
@@ -280,7 +296,6 @@ namespace hnswlib
 
             // Divide by range
             int index = 0;
-            int num_subranges = 5;
             int range_start_indices[num_subranges + 1];
 
             for (int i = 0; i < num_subranges; i++)
@@ -292,7 +307,7 @@ namespace hnswlib
             range_start_indices[num_subranges] = num_data - 1;
 
             // For each range, get a norm-based factor
-            int z = 50;
+            int num_samples = 50;
             int num_neighbours = 100;
             std::vector<float> query;
             std::vector<float> neighbours[num_neighbours];
@@ -302,18 +317,19 @@ namespace hnswlib
                 float xp_sum = 0;
                 float pp_sum = 0;
 
-//                #pragma omp parallel for reduction(+:xp_sum,pp_sum)
-                for (int j = 0; j < z; j++) // samples
+                #pragma omp parallel for reduction(+:xp_sum,pp_sum)
+                for (int sample_index = 0; sample_index < num_samples; sample_index++)
                 {
                     int random_indice = getRandomIndice(range_start_indices[i], range_start_indices[i + 1]);
                     query = dataset[random_indice];
 
-                    // get nearest neighbours
+                    // get nearest neighbours (p)
                     std::priority_queue<std::pair<dist_t, int>, std::vector<std::pair<dist_t, int>>, CompareByFirst> nearest_neighbours;
                     for (int n=0; n<dataset.size(); n++) {
                       // get inner product
                       float inner_product = 0;
                       for (unsigned d = 0; d < dim_; d += 4) {
+                        // Used faster for loop to accelerate this method
                         inner_product += query[d] * dataset[n][d] +
                                         query[d+1] * dataset[n][d+1] +
                                         query[d+2] * dataset[n][d+2] +
@@ -324,6 +340,7 @@ namespace hnswlib
 
                     for (int n=0; n<num_neighbours; n++) {
                       neighbours[n] = dataset[nearest_neighbours.top().second];
+
                       // get x * p
                       for (int d = 0; d < dim_; d += 4)
                       {
@@ -336,23 +353,19 @@ namespace hnswlib
                     }
 
                     // Get p_i * p_j
-//                    #pragma omp parallel for reduction(+:pp_sum) num_threads(MAX)
                     for (int m = 0; m < num_neighbours; m++)
                     {
                         for (int n = 0; n < num_neighbours; n++)
                         {
                             if (m != n)
                             {
-                                #pragma omp parallel for reduction(+:pp_sum) num_threads(MAX)
-//                                #pragma omp simd reduction(+:pp_sum)
-                                for (int d = 0; d < dim_; d += 6)
+                                #pragma omp parallel for reduction(+:pp_sum)
+                                for (int d = 0; d < dim_; d += 4)
                                 {
                                     pp_sum += neighbours[m][d] * neighbours[n][d] +
                                               neighbours[m][d+1] * neighbours[n][d+1] +
                                               neighbours[m][d+2] * neighbours[n][d+2] +
-                                              neighbours[m][d+3] * neighbours[n][d+3] +
-                                              neighbours[m][d+4] * neighbours[n][d+4] +
-                                              neighbours[m][d+5] * neighbours[n][d+5];
+                                              neighbours[m][d+3] * neighbours[n][d+3];
                                 }
                             }
                         }
