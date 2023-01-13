@@ -223,6 +223,9 @@ namespace hnswlib
             return sqrt(sum);
         }
 
+        /// @brief Append data to a list inside this class in order to calculate the adjusting factors.
+        /// @param data One data point to add.
+        /// @param dim Dimension size of the data.
         void addData(const float *data, size_t dim)
         {
           std::vector<float> data_list;
